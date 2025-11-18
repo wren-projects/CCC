@@ -9,7 +9,7 @@ fn apply_acc(v: i8, dv: i8) -> i8 {
     if v == 0 {
         return dv * 5;
     }
-    if (v + dv).abs() == 0 {
+    if v + dv == 0 {
         return v;
     }
     if (v + dv).abs() == 6 {
@@ -18,8 +18,6 @@ fn apply_acc(v: i8, dv: i8) -> i8 {
 
     v + dv
 }
-
-const K: i16 = 4;
 
 type State = (i16, i16, i8, i8, u8, u8);
 
@@ -84,36 +82,27 @@ fn solve(
 ) -> Result<(Vec<i8>, Vec<i8>), String> {
     let start = Instant::now();
 
-    let mut asteroid_tree = Quadtree::<i16, ()>::new_with_anchor(
-        Point {
-            x: i16::MIN,
-            y: i16::MIN,
-        },
-        14,
-    );
-
-    for (x, y) in asteroids {
-        asteroid_tree.insert_pt(
+    let asteroid_tree = {
+        let mut qtree = Quadtree::<i16, ()>::new_with_anchor(
             Point {
-                x: *x + 1,
-                y: *y + 1,
+                x: i16::MIN,
+                y: i16::MIN,
             },
-            (),
+            14,
         );
-    }
 
-    let mut items = vec![(x_target, y_target), (0, 0)];
-    items.extend(asteroids);
+        for (x, y) in asteroids {
+            qtree.insert_pt(
+                Point {
+                    x: *x + 1,
+                    y: *y + 1,
+                },
+                (),
+            );
+        }
 
-    let bounding_box = (
-        items.iter().map(|(x, _)| *x).min().unwrap() - K,
-        items.iter().map(|(x, _)| *x).max().unwrap() + K,
-        items.iter().map(|(_, y)| *y).min().unwrap() - K,
-        items.iter().map(|(_, y)| *y).max().unwrap() + K,
-    );
-
-    let x_range = bounding_box.0..=bounding_box.1;
-    let y_range = bounding_box.2..=bounding_box.3;
+        qtree
+    };
 
     let state = (0, 0, 0, 0, 0, 0);
 
@@ -124,7 +113,7 @@ fn solve(
     let mut grid: FxHashMap<State, GridEntry> = FxHashMap::default();
     grid.insert(state, GridEntry::new());
 
-    let mut predecessors: FxHashMap<State, Option<State>> = FxHashMap::default();
+    let mut predecessors: FxHashMap<State, State> = FxHashMap::default();
 
     while let Some(QueueItem {
         time,
@@ -145,23 +134,21 @@ fn solve(
             .dimensions((3, 3))
             .build();
 
-        if asteroid_tree
-            .query(unsafe { builder.unwrap_unchecked() })
-            .next()
-            .is_some()
-        {
+        if asteroid_tree.query(builder.unwrap()).next().is_some() {
             continue;
         }
 
         grid_entry.time = time;
-        predecessors.insert(state, prev_state);
+        if let Some(prev_state) = prev_state {
+            predecessors.insert(state, prev_state);
+        }
 
         if x == x_target && y == y_target && v_x == 0 && v_y == 0 {
             let mut moves_x = vec![0];
             let mut moves_y = vec![0];
 
             let mut current_state = state;
-            while let Some(Some(prev_state)) = predecessors.get(&current_state) {
+            while let Some(prev_state) = predecessors.get(&current_state) {
                 if current_state.2 != prev_state.2 || current_state.4 >= prev_state.4 {
                     moves_x.push(prev_state.2);
                 }
@@ -176,18 +163,20 @@ fn solve(
             moves_y.reverse();
 
             let elapsed = start.elapsed();
-            eprintln!(
-                "Done {} in {:?} in {} steps out of {} allowed",
-                i, elapsed, time, max_t
-            );
+            eprintln!("Done {i} in {elapsed:?} with {time}/{max_t} steps");
 
             return Ok((moves_x, moves_y));
         }
 
         let elapsed = tick_x.min(tick_y) + 1;
 
-        let x_changes = if let Some(new_tick_x) = tick_x.checked_sub(elapsed) {
-            &[(x, v_x, new_tick_x)] as &[(i16, i8, u8)]
+        let new_time = time + elapsed as u16;
+        if new_time > max_t {
+            continue;
+        }
+
+        let x_changes: &[(i16, i8, u8)] = if let Some(new_tick_x) = tick_x.checked_sub(elapsed) {
+            &[(x, v_x, new_tick_x)]
         } else {
             let new_x = x + v_x.signum() as i16;
             &[
@@ -209,8 +198,8 @@ fn solve(
             ]
         };
 
-        let y_changes = if let Some(new_tick_y) = tick_y.checked_sub(elapsed) {
-            &[(y, v_y, new_tick_y)] as &[(i16, i8, u8)]
+        let y_changes: &[(i16, i8, u8)] = if let Some(new_tick_y) = tick_y.checked_sub(elapsed) {
+            &[(y, v_y, new_tick_y)]
         } else {
             let new_y = y + v_y.signum() as i16;
             &[
@@ -235,15 +224,6 @@ fn solve(
         for ((new_x, new_v_x, new_tick_x), (new_y, new_v_y, new_tick_y)) in
             itertools::iproduct!(x_changes, y_changes)
         {
-            if !(x_range.contains(new_x) && y_range.contains(new_y)) {
-                continue;
-            }
-
-            let new_time = time + elapsed as u16;
-            if new_time > max_t {
-                continue;
-            }
-
             let new_state = (*new_x, *new_y, *new_v_x, *new_v_y, *new_tick_x, *new_tick_y);
             let new_entry = grid.entry(new_state).or_insert_with(GridEntry::new);
 
@@ -253,14 +233,13 @@ fn solve(
 
             new_entry.time = new_time;
 
-            let new_heuristic = new_time
-                + ((new_x - x_target).unsigned_abs() * new_v_x.unsigned_abs() as u16)
-                    .max((new_y - y_target).unsigned_abs() * new_v_y.unsigned_abs() as u16);
+            let new_heuristic =
+                new_time + (new_x - x_target).unsigned_abs() + (new_y - y_target).unsigned_abs();
 
             queue.push(QueueItem {
                 time: new_time,
                 state: new_state,
-                prev_state,
+                prev_state: Some(state),
                 heuristic: new_heuristic,
             });
         }

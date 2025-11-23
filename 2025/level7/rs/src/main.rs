@@ -21,17 +21,6 @@ fn apply_acc(v: i8, dv: i8) -> i8 {
 
 type State = (i16, i16, i8, i8, u8, u8);
 
-#[derive(Copy, Clone, Debug)]
-struct GridEntry {
-    time: u16,
-}
-
-impl GridEntry {
-    fn new() -> Self {
-        Self { time: u16::MAX }
-    }
-}
-
 struct QueueItem {
     heuristic: u16,
     time: u16,
@@ -110,8 +99,7 @@ fn solve(
     let mut queue: BinaryHeap<QueueItem> = BinaryHeap::new();
     queue.push(QueueItem::new(0, 2, state, None));
 
-    let mut grid: FxHashMap<State, GridEntry> = FxHashMap::default();
-    grid.insert(state, GridEntry::new());
+    let mut grid: FxHashMap<State, u16> = FxHashMap::default();
 
     let mut predecessors: FxHashMap<State, State> = FxHashMap::default();
 
@@ -122,8 +110,8 @@ fn solve(
         ..
     }) = queue.pop()
     {
-        let grid_entry = grid.entry(state).or_insert_with(GridEntry::new);
-        if time > grid_entry.time {
+        let grid_entry = grid.entry(state).or_insert(u16::MAX);
+        if time > *grid_entry {
             continue;
         }
 
@@ -138,7 +126,7 @@ fn solve(
             continue;
         }
 
-        grid_entry.time = time;
+        *grid_entry = time;
         if let Some(prev_state) = prev_state {
             predecessors.insert(state, prev_state);
         }
@@ -225,13 +213,13 @@ fn solve(
             itertools::iproduct!(x_changes, y_changes)
         {
             let new_state = (*new_x, *new_y, *new_v_x, *new_v_y, *new_tick_x, *new_tick_y);
-            let new_entry = grid.entry(new_state).or_insert_with(GridEntry::new);
+            let new_entry = grid.entry(new_state).or_insert(u16::MAX);
 
-            if new_time >= new_entry.time {
+            if new_time >= *new_entry {
                 continue;
             }
 
-            new_entry.time = new_time;
+            *new_entry = new_time;
 
             let new_heuristic =
                 new_time + (new_x - x_target).unsigned_abs() + (new_y - y_target).unsigned_abs();

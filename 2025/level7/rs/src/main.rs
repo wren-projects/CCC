@@ -6,6 +6,7 @@ use std::collections::hash_map::Entry;
 use std::io::{self, BufRead};
 use std::time::Instant;
 
+#[inline]
 fn apply_acc(v: i8, dv: i8) -> i8 {
     if v == 0 {
         return dv * 5;
@@ -18,6 +19,30 @@ fn apply_acc(v: i8, dv: i8) -> i8 {
     }
 
     v + dv
+}
+
+fn changes(pos: i16, v: i8, tick: u8, elapsed: u8, out: &mut Vec<(i16, i8, u8)>) {
+    if let Some(new_tick_y) = tick.checked_sub(elapsed) {
+        out.push((pos, v, new_tick_y));
+    } else {
+        let new_y = pos + v.signum() as i16;
+
+        // let base = if v == 1 {
+        //     0..=1
+        // } else if v == -1 {
+        //     -1..=0
+        // } else {
+        // };
+
+        out.extend((-1..=1).filter_map(|dv| {
+            let new_v = apply_acc(v, dv);
+            (dv == 0 || new_v != v).then_some((
+                new_y,
+                new_v,
+                new_v.unsigned_abs().saturating_sub(1),
+            ))
+        }));
+    }
 }
 
 type State = (i16, i16, i8, i8, u8, u8);
@@ -98,6 +123,9 @@ fn solve(
 
     let mut predecessors: FxHashMap<State, State> = FxHashMap::default();
 
+    let mut x_changes = Vec::with_capacity(3);
+    let mut y_changes = Vec::with_capacity(3);
+
     while let Some(QueueItem {
         time,
         state,
@@ -106,6 +134,7 @@ fn solve(
     }) = queue.pop()
     {
         let grid_entry = grid.entry(state);
+
         if let Entry::Occupied(old_time) = &grid_entry
             && time > *old_time.get()
         {
@@ -166,55 +195,35 @@ fn solve(
             continue;
         }
 
-        let x_changes: &[(i16, i8, u8)] = if let Some(new_tick_x) = tick_x.checked_sub(elapsed) {
-            &[(x, v_x, new_tick_x)]
-        } else {
-            let new_x = x + v_x.signum() as i16;
-            &[-1, 0, 1].map(|dv| {
-                (
-                    new_x,
-                    apply_acc(v_x, dv),
-                    apply_acc(v_x, dv).unsigned_abs().saturating_sub(1),
-                )
-            })
-        };
+        x_changes.clear();
+        changes(x, v_x, tick_x, elapsed, &mut x_changes);
+        y_changes.clear();
+        changes(y, v_y, tick_y, elapsed, &mut y_changes);
 
-        let y_changes: &[(i16, i8, u8)] = if let Some(new_tick_y) = tick_y.checked_sub(elapsed) {
-            &[(y, v_y, new_tick_y)]
-        } else {
-            let new_y = y + v_y.signum() as i16;
-            &[-1, 0, 1].map(|dv| {
-                (
-                    new_y,
-                    apply_acc(v_y, dv),
-                    apply_acc(v_y, dv).unsigned_abs().saturating_sub(1),
-                )
-            })
-        };
+        for &(new_x, new_v_x, new_tick_x) in &x_changes {
+            for &(new_y, new_v_y, new_tick_y) in &y_changes {
+                let new_state = (new_x, new_y, new_v_x, new_v_y, new_tick_x, new_tick_y);
+                let new_entry = grid.entry(new_state);
 
-        for ((new_x, new_v_x, new_tick_x), (new_y, new_v_y, new_tick_y)) in
-            itertools::iproduct!(x_changes, y_changes)
-        {
-            let new_state = (*new_x, *new_y, *new_v_x, *new_v_y, *new_tick_x, *new_tick_y);
-            let new_entry = grid.entry(new_state);
+                if let Entry::Occupied(old_time) = &new_entry
+                    && new_time >= *old_time.get()
+                {
+                    continue;
+                }
 
-            if let Entry::Occupied(old_time) = &new_entry
-                && new_time >= *old_time.get()
-            {
-                continue;
+                new_entry.insert_entry(new_time);
+
+                let new_heuristic = new_time
+                    + (new_x - x_target).unsigned_abs()
+                    + (new_y - y_target).unsigned_abs();
+
+                queue.push(QueueItem {
+                    time: new_time,
+                    state: new_state,
+                    prev_state: state,
+                    heuristic: new_heuristic,
+                });
             }
-
-            new_entry.insert_entry(new_time);
-
-            let new_heuristic =
-                new_time + (new_x - x_target).unsigned_abs() + (new_y - y_target).unsigned_abs();
-
-            queue.push(QueueItem {
-                time: new_time,
-                state: new_state,
-                prev_state: state,
-                heuristic: new_heuristic,
-            });
         }
     }
 
@@ -226,6 +235,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut lines = stdin.lock().lines();
 
     let n: usize = lines.next().unwrap()?.parse()?;
+
+    let start = Instant::now();
 
     let mut xs = Vec::new();
     let mut ys = Vec::new();
@@ -242,7 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let x = coords[0];
         let y = coords[1];
 
-        let _: usize = lines.next().unwrap()?.parse()?;
+        let asteroid_count: usize = lines.next().unwrap()?.parse()?;
 
         let asteroid_line = lines.next().unwrap()?;
         let mut asteroids = Vec::new();
@@ -255,11 +266,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             asteroids.push((asteroid_coords[0], asteroid_coords[1]));
         }
 
+        assert_eq!(asteroid_count, asteroids.len());
+
         xs.push(x);
         ys.push(y);
         asteroids_list.push(asteroids);
         ts.push(t.parse()?);
     }
+
+    eprintln!("Input parsed in {:?}", start.elapsed());
 
     // Process in parallel using rayon
     let results: Vec<_> = (0..n)

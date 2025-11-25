@@ -2,6 +2,7 @@ use fxhash::FxHashMap;
 use quadtree_rs::{Quadtree, area::AreaBuilder, point::Point};
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
+use std::collections::hash_map::Entry;
 use std::io::{self, BufRead};
 use std::time::Instant;
 
@@ -25,11 +26,11 @@ struct QueueItem {
     heuristic: u16,
     time: u16,
     state: State,
-    prev_state: Option<State>,
+    prev_state: State,
 }
 
 impl QueueItem {
-    fn new(heuristic: u16, time: u16, state: State, prev_state: Option<State>) -> Self {
+    fn new(heuristic: u16, time: u16, state: State, prev_state: State) -> Self {
         Self {
             heuristic,
             time,
@@ -57,8 +58,8 @@ impl Ord for QueueItem {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.heuristic
             .cmp(&other.heuristic)
+            .then(self.time.cmp(&other.time))
             .reverse()
-            .then(self.time.cmp(&other.time).reverse())
     }
 }
 
@@ -72,19 +73,14 @@ fn solve(
     let start = Instant::now();
 
     let asteroid_tree = {
-        let mut qtree = Quadtree::<i16, ()>::new_with_anchor(
-            Point {
-                x: i16::MIN,
-                y: i16::MIN,
-            },
-            14,
-        );
+        // assume the grid fits within 2000x2000 centered around the origin
+        let mut qtree = Quadtree::<i16, ()>::new_with_anchor(Point { x: -1000, y: -1000 }, 11);
 
         for (x, y) in asteroids {
             qtree.insert_pt(
                 Point {
-                    x: *x + 1,
-                    y: *y + 1,
+                    x: *x + 2,
+                    y: *y + 2,
                 },
                 (),
             );
@@ -95,9 +91,8 @@ fn solve(
 
     let state = (0, 0, 0, 0, 0, 0);
 
-    // Using BinaryHeap with Reverse for min-heap behavior
     let mut queue: BinaryHeap<QueueItem> = BinaryHeap::new();
-    queue.push(QueueItem::new(0, 2, state, None));
+    queue.push(QueueItem::new(0, 2, state, state));
 
     let mut grid: FxHashMap<State, u16> = FxHashMap::default();
 
@@ -110,8 +105,10 @@ fn solve(
         ..
     }) = queue.pop()
     {
-        let grid_entry = grid.entry(state).or_insert(u16::MAX);
-        if time > *grid_entry {
+        let grid_entry = grid.entry(state);
+        if let Entry::Occupied(old_time) = &grid_entry
+            && time > *old_time.get()
+        {
             continue;
         }
 
@@ -119,30 +116,36 @@ fn solve(
 
         let builder = AreaBuilder::default()
             .anchor(Point { x, y })
-            .dimensions((3, 3))
+            .dimensions((5, 5))
             .build();
 
         if asteroid_tree.query(builder.unwrap()).next().is_some() {
             continue;
         }
 
-        *grid_entry = time;
-        if let Some(prev_state) = prev_state {
-            predecessors.insert(state, prev_state);
-        }
+        grid_entry.insert_entry(time);
+        predecessors.insert(state, prev_state);
 
         if x == x_target && y == y_target && v_x == 0 && v_y == 0 {
             let mut moves_x = vec![0];
             let mut moves_y = vec![0];
 
             let mut current_state = state;
-            while let Some(prev_state) = predecessors.get(&current_state) {
-                if current_state.2 != prev_state.2 || current_state.4 >= prev_state.4 {
-                    moves_x.push(prev_state.2);
-                }
+            // walk through the predecessors, until we reach the start
+            while let Some(prev_state) = predecessors.get(&current_state)
+                && current_state != (0, 0, 0, 0, 0, 0)
+            {
+                let (_, _, v_x, v_y, tick_x, tick_y) = current_state;
+                let (_, _, prev_v_x, prev_v_y, prev_tick_x, prev_tick_y) = *prev_state;
 
-                if current_state.3 != prev_state.3 || current_state.5 >= prev_state.5 {
-                    moves_y.push(prev_state.3);
+                // if speed has changed add it to the list
+                // if the tick is greater or equal to the previous tick, it had to underflow
+                // meaning we continued again at the previous speed
+                if v_x != prev_v_x || tick_x >= prev_tick_x {
+                    moves_x.push(prev_v_x);
+                }
+                if v_y != prev_v_y || tick_y >= prev_tick_y {
+                    moves_y.push(prev_v_y);
                 }
 
                 current_state = *prev_state;
@@ -167,59 +170,41 @@ fn solve(
             &[(x, v_x, new_tick_x)]
         } else {
             let new_x = x + v_x.signum() as i16;
-            &[
+            &[-1, 0, 1].map(|dv| {
                 (
                     new_x,
-                    apply_acc(v_x, -1),
-                    apply_acc(v_x, -1).unsigned_abs().saturating_sub(1),
-                ),
-                (
-                    new_x,
-                    apply_acc(v_x, 0),
-                    apply_acc(v_x, 0).unsigned_abs().saturating_sub(1),
-                ),
-                (
-                    new_x,
-                    apply_acc(v_x, 1),
-                    apply_acc(v_x, 1).unsigned_abs().saturating_sub(1),
-                ),
-            ]
+                    apply_acc(v_x, dv),
+                    apply_acc(v_x, dv).unsigned_abs().saturating_sub(1),
+                )
+            })
         };
 
         let y_changes: &[(i16, i8, u8)] = if let Some(new_tick_y) = tick_y.checked_sub(elapsed) {
             &[(y, v_y, new_tick_y)]
         } else {
             let new_y = y + v_y.signum() as i16;
-            &[
+            &[-1, 0, 1].map(|dv| {
                 (
                     new_y,
-                    apply_acc(v_y, -1),
-                    apply_acc(v_y, -1).unsigned_abs().saturating_sub(1),
-                ),
-                (
-                    new_y,
-                    apply_acc(v_y, 0),
-                    apply_acc(v_y, 0).unsigned_abs().saturating_sub(1),
-                ),
-                (
-                    new_y,
-                    apply_acc(v_y, 1),
-                    apply_acc(v_y, 1).unsigned_abs().saturating_sub(1),
-                ),
-            ]
+                    apply_acc(v_y, dv),
+                    apply_acc(v_y, dv).unsigned_abs().saturating_sub(1),
+                )
+            })
         };
 
         for ((new_x, new_v_x, new_tick_x), (new_y, new_v_y, new_tick_y)) in
             itertools::iproduct!(x_changes, y_changes)
         {
             let new_state = (*new_x, *new_y, *new_v_x, *new_v_y, *new_tick_x, *new_tick_y);
-            let new_entry = grid.entry(new_state).or_insert(u16::MAX);
+            let new_entry = grid.entry(new_state);
 
-            if new_time >= *new_entry {
+            if let Entry::Occupied(old_time) = &new_entry
+                && new_time >= *old_time.get()
+            {
                 continue;
             }
 
-            *new_entry = new_time;
+            new_entry.insert_entry(new_time);
 
             let new_heuristic =
                 new_time + (new_x - x_target).unsigned_abs() + (new_y - y_target).unsigned_abs();
@@ -227,7 +212,7 @@ fn solve(
             queue.push(QueueItem {
                 time: new_time,
                 state: new_state,
-                prev_state: Some(state),
+                prev_state: state,
                 heuristic: new_heuristic,
             });
         }

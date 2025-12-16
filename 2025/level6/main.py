@@ -2,10 +2,11 @@ from collections import defaultdict
 import multiprocessing
 from queue import PriorityQueue
 import sys
-from time import time as time_lib
+from time import time
 
 
 def apply_acc(v, dv):
+    """Apply acceleration to velocity."""
     if v == 0:
         return dv * 5
     if abs(v + dv) == 0:
@@ -17,6 +18,7 @@ def apply_acc(v, dv):
 
 
 def sign(x):
+    """Get the sign of a number."""
     if x > 0:
         return 1
     if x < 0:
@@ -28,8 +30,8 @@ def sign(x):
 K = 10
 
 
-def solve(I, X, Y, aX, aY, MAX_T):
-    start = time_lib()
+def solve(i, target_x, target_y, asteroid_x, asteroid_y, max_tick):
+    start = time()
     type State = tuple[int, int, int, int, int, int]
     grid: dict[State, list] = defaultdict(lambda: [float("inf"), [0], [0]])
 
@@ -39,28 +41,20 @@ def solve(I, X, Y, aX, aY, MAX_T):
     queue.put((0, 0, (x, y, v_x, v_y, tick_x, tick_y)))
 
     while queue.qsize() > 0:
-        _, time, state = queue.get()
-
-        if time > MAX_T:
-            continue
+        _, tick, state = queue.get()
 
         x, y, v_x, v_y, tick_x, tick_y = state
 
         grid_time, moves_x, moves_y = grid[state]
-        if grid_time < time:
+        if grid_time < tick:
             continue
 
-        if abs(x - aX) <= 2 and abs(y - aY) <= 2:
-            continue
-
-        if x == X and y == Y and v_x == 0 and v_y == 0:
-            elapsed = time_lib() - start
-            print(f"Done {I} in {elapsed}", file=sys.stderr)
+        if x == target_x and y == target_y and v_x == 0 and v_y == 0:
+            elapsed = time() - start
+            print(f"Done {i} in {elapsed}", file=sys.stderr)
             return grid[state][1:]
 
-        if (x**2 + y**2) ** 0.5 + ((x - X) ** 2 + (y - Y) ** 2) ** 0.5 >= (
-            X**2 + Y**2
-        ) ** 0.5 + K:
+        if tick >= max_tick:
             continue
 
         for dv_x in range(-1, 2):
@@ -92,16 +86,20 @@ def solve(I, X, Y, aX, aY, MAX_T):
                     new_y = y + sign(v_y)
                     new_moves_y.append(new_v_y)
 
+                # if within 2 tiles of the astroid, skip
+                if abs(new_x - asteroid_x) <= 2 and abs(new_y - asteroid_y) <= 2:
+                    continue
+
                 new_state = (new_x, new_y, new_v_x, new_v_y, new_tick_x, new_tick_y)
-                new_time = time + 1
+                new_tick = tick + 1
 
-                if grid[new_state][0] > new_time:
-                    new_heuristic = new_time + max(
-                        abs(new_x - X) * abs(v_x), abs(new_y - Y) * abs(v_y)
+                if grid[new_state][0] > new_tick:
+                    new_heuristic = (
+                        new_tick + abs(new_x - target_x) + abs(new_y - target_y)
                     )
-                    queue.put((new_heuristic, new_time, new_state))
+                    queue.put((new_heuristic, new_tick, new_state))
 
-                    grid[new_state] = [new_time, new_moves_x, new_moves_y]
+                    grid[new_state] = [new_tick, new_moves_x, new_moves_y]
 
     raise Exception("No solution")
 

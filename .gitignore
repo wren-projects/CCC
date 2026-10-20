@@ -1,7 +1,8 @@
-# Inputs
+# Inputs and outputs
 *.zip
 *.in.*
 *.out
+out_level-*.txt
 
 # Python-generated files
 __pycache__/

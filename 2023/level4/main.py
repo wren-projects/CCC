@@ -1,11 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass
 
-# _input = input
-# input = lambda: _input().strip()
-stdin = open("level4_example.in")
-input = lambda: stdin.readline().strip()
-
 N = int(input())
 
 

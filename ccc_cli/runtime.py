@@ -5,7 +5,9 @@ from __future__ import annotations
 import builtins
 import os
 import sys
-from typing import TextIO
+from collections.abc import Callable
+from types import NoneType
+from typing import TextIO, overload
 
 _output: TextIO | None = None
 _console: TextIO | None = None
@@ -73,6 +75,35 @@ def print_output(
         file=target,
         flush=flush,
     )
+
+
+def intinput() -> int:
+    return int(input())
+
+
+def intline() -> tuple[int, ...]:
+    return tuple(map(int, input().split()))
+
+
+def wordline() -> tuple[str, ...]:
+    return tuple(input().split())
+
+
+@overload
+def grid[T](width: int, height: int, f: Callable[[int, int], T]) -> list[list[T]]: ...
+@overload
+def grid[T](width: int, height: int, value: T) -> list[list[T]]: ...
+@overload
+def grid[T](width: int, height: int) -> list[list[None]]: ...
+
+
+def grid[T = NoneType](
+    width: int, height: int, fill: Callable[[int, int], T] | T | None = None
+) -> list[list[T | None]]:
+    if isinstance(fill, Callable):
+        return [[fill(x, y) for x in range(width)] for y in range(height)]
+
+    return [[fill for _ in range(width)] for _ in range(height)]
 
 
 # The CLI sends debug output to stderr; standalone runs use stdout.

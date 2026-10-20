@@ -7,9 +7,6 @@ import os
 import sys
 from typing import TextIO
 
-# Avoid recursion with the ``print`` below.
-_builtin_print = builtins.print
-
 _output: TextIO | None = None
 _console: TextIO | None = None
 _dev = True
@@ -47,7 +44,7 @@ def print(
     if not _dev:
         return
 
-    _builtin_print(
+    builtins.print(
         *values,
         sep=sep,
         end=end,
@@ -69,7 +66,7 @@ def print_output(
     if target is None:
         target = sys.__stdout__ or sys.stdout
 
-    _builtin_print(
+    builtins.print(
         *values,
         sep=sep,
         end=end,

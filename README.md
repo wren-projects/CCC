@@ -46,15 +46,17 @@ ccc send 3 1            # submit subtask 1 of level 3
 Levels live in `<year>/level<n>/`, with the year taken from the game slug
 (for example `2025` for `ccc-2025.11-classic-spaceship`). `ccc new` puts all
 downloaded files in `<level>/data/`, next to `main.py`, and moves the level
-PDF to the level directory.
+PDF to the level directory. If the archive contains an HTML visualizer, it
+becomes `<level>/visualizer.html`.
 
 Downloaded levels contain inputs named `in_level-1_1-small.txt`, an example
-input and output, and a PDF description:
+input and output, a PDF description, and sometimes an HTML visualizer:
 
 ```text
 2025/level1/
   main.py
   level-1.pdf
+  visualizer.html
   data/
     in_level-1_0-example.txt
     out_level-1_0-example.txt
@@ -64,8 +66,9 @@ input and output, and a PDF description:
     in_level-1_2-large.txt.out
 ```
 
-`ccc solve` writes `<input>.out` for every input and compares it with the
-example's `out_level-...txt` when that file exists. `ccc send` uploads the
+`ccc new` keeps the downloaded example output as
+`data/out_level-..._example.txt`. `ccc solve` writes `<input>.out` for every
+input and validates the example against that file. `ccc send` uploads the
 non-example outputs to the live game server and prints the judge's verdict,
 plus the first few wrong lines when a submission is rejected.
 

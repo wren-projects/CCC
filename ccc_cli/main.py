@@ -83,6 +83,19 @@ def _safe_extract(zip_data: bytes, destination: Path) -> None:
                 shutil.copyfileobj(source, output)
 
 
+def _move_visualizer(data: Path, folder: Path) -> Path | None:
+    html_files = sorted(
+        path
+        for path in data.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".html", ".htm"}
+    )
+    if not html_files:
+        return None
+    target = folder / "visualizer.html"
+    html_files[0].replace(target)
+    return target
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     config = load_config()
     config.contest_id = str(args.contest_id).strip()
@@ -170,6 +183,8 @@ def cmd_new(args: argparse.Namespace) -> int:
     for name in pdf_names:
         (data / name).replace(task.folder / name)
 
+    visualizer = _move_visualizer(data, task.folder)
+
     if main_file.exists():
         print(f"Kept existing {main_file}")
     else:
@@ -184,6 +199,8 @@ def cmd_new(args: argparse.Namespace) -> int:
             webbrowser.open(pdf.as_uri())
         except webbrowser.Error:
             pass
+    if visualizer is not None:
+        print(f"Visualizer: {visualizer}")
 
     print(f"Next: {_bold(f'ccc solve {task.label}')}")
     return 0
@@ -200,6 +217,7 @@ def _show_mismatch(expected: str, actual: str) -> None:
         fromfile="expected",
         tofile="got",
         lineterm="",
+        color=True,
     )
     print("    First differences:")
     for line in list(diff)[:60]:

@@ -1,10 +1,10 @@
 #![warn(clippy::pedantic)]
 
-use fxhash::FxHashMap;
+use ahash::HashMap;
 use quadtree_rs::{Quadtree, area::AreaBuilder, point::Point};
 use rayon::prelude::*;
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::BinaryHeap;
+use std::collections::hash_map::Entry;
 use std::io::{self, BufRead};
 use std::time::Instant;
 
@@ -25,8 +25,8 @@ fn apply_acc(v: Velocity, dv: Velocity) -> Velocity {
 
 type Position = i16;
 type Velocity = i8;
-type Tick = i8;
-type Time = i16;
+type Tick = u8;
+type Time = u16;
 type State = (Position, Position, Velocity, Velocity, Tick, Tick);
 
 fn changes(
@@ -39,11 +39,15 @@ fn changes(
     if let Some(new_tick_y) = tick.checked_sub(elapsed) {
         out.push((pos, v, new_tick_y));
     } else {
-        let new_y = pos + v.signum() as Position;
+        let new_y = pos + Position::from(v.signum());
 
         out.extend((-1..=1).filter_map(|dv| {
             let new_v = apply_acc(v, dv);
-            (dv == 0 || new_v != v).then_some((new_y, new_v, (new_v.abs() - 1).max(0)))
+            (dv == 0 || new_v != v).then_some((
+                new_y,
+                new_v,
+                new_v.unsigned_abs().saturating_sub(1),
+            ))
         }));
     }
 }
@@ -120,9 +124,9 @@ fn solve(
     let mut queue: BinaryHeap<QueueItem> = BinaryHeap::new();
     queue.push(QueueItem::new(0, 2, state, state));
 
-    let mut grid: BTreeMap<State, Time> = BTreeMap::default();
+    let mut grid: HashMap<State, Time> = HashMap::default();
 
-    let mut predecessors: BTreeMap<State, State> = BTreeMap::default();
+    let mut predecessors: HashMap<State, State> = HashMap::default();
 
     let mut x_changes = Vec::with_capacity(3);
     let mut y_changes = Vec::with_capacity(3);
@@ -191,7 +195,7 @@ fn solve(
 
         let elapsed = tick_x.min(tick_y) + 1;
 
-        let new_time = time + elapsed as Time;
+        let new_time = time + Time::from(elapsed);
         if new_time > max_t {
             continue;
         }
@@ -214,7 +218,9 @@ fn solve(
 
                 new_entry.insert_entry(new_time);
 
-                let new_heuristic = new_time + (new_x - x_target).abs() + (new_y - y_target).abs();
+                let new_heuristic = new_time
+                    + (new_x - x_target).unsigned_abs()
+                    + (new_y - y_target).unsigned_abs();
 
                 queue.push(QueueItem {
                     time: new_time,

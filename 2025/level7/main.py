@@ -1,18 +1,19 @@
-from collections import defaultdict
-import multiprocessing
-from queue import PriorityQueue
+import heapq
+from quads import QuadTree, BoundingBox
 import sys
-from time import time as time_lib
+from collections import defaultdict
+from multiprocessing import Pool
+import time
+from itertools import product
 
 
 def apply_acc(v, dv):
     if v == 0:
         return dv * 5
-    if abs(v + dv) == 0:
+    if v + dv == 0:
         return v
     if abs(v + dv) == 6:
         return 0
-
     return v + dv
 
 
@@ -25,129 +26,190 @@ def sign(x):
     return 0
 
 
-K = 10
+def changes(pos, v, tick, elapsed) -> list[tuple[int, int, int]]:
+    """Returns list of possible (pos, v, tick) changes after elapsed ticks."""
+    if tick >= elapsed:
+        return [(pos, v, tick - elapsed)]
+
+    new_x = pos + sign(v)
+    return [
+        (new_x, acc := apply_acc(v, dv), saturating_sub(abs(acc), 1))
+        for dv in range(-1, 2)
+    ]
 
 
-def solve(I, X, Y, ass, MAX_T):
-    start = time_lib()
-    ass = set(ass)
-    type State = tuple[int, int, int, int, int, int]
-    grid: defaultdict[State, tuple[int, list[int], list[int]]] = defaultdict(lambda: (float("inf"), [0], [0]))
+def saturating_sub(x, y):
+    return max(0, x - y)
 
-    items = [*ass, (X, Y), (0, 0)]
 
-    bounding_box = (
-        min(items, key=lambda a: a[0])[0] - K,
-        max(items, key=lambda a: a[0])[0] + K,
-        min(items, key=lambda a: a[1])[1] - K,
-        max(items, key=lambda a: a[1])[1] + K,
-    )
+type State = tuple[int, int, int, int, int, int]
 
-    x = y = v_x = v_y = tick_x = tick_y = 0
 
-    queue: PriorityQueue[tuple[int, int, State]] = PriorityQueue()
-    queue.put((0, 2, (x, y, v_x, v_y, tick_x, tick_y)))
+class QueueItem:
+    def __init__(
+        self, heuristic: int, time: int, state: State, prev_state: State | None = None
+    ):
+        self.heuristic = heuristic
+        self.time = time
+        self.state = state
+        self.prev_state = prev_state
 
-    while queue.qsize() > 0:
-        _, time, state = queue.get()
+    def __lt__(self, other):
+        if self.heuristic != other.heuristic:
+            return self.heuristic < other.heuristic
 
-        if time > MAX_T:
+        return self.time < other.time
+
+    def __eq__(self, other):
+        return (
+            self.heuristic == other.heuristic
+            and self.time == other.time
+            and self.state == other.state
+        )
+
+
+def check_collision(x, y, asteroids):
+    """Check if position (x,y) collides with any asteroid in 3x3 area"""
+    for ax, ay in asteroids:
+        if abs(ax - x) <= 1 and abs(ay - y) <= 1:
+            return True
+    return False
+
+
+def solve(i, x_target, y_target, asteroids, max_t):
+    start_time = time.time()
+
+    # assume all asteroids are within 1000x1000 grid
+    asteroid_quad = QuadTree((0, 0), 1000, 1000)
+
+    for ax, ay in asteroids:
+        asteroid_quad.insert((ax, ay))
+
+    state: State = (0, 0, 0, 0, 0, 0)  # x, y, v_x, v_y, tick_x, tick_y
+
+    # Priority queue for A* search
+    queue = [QueueItem(0, 2, state, None)]
+    heapq.heapify(queue)
+
+    grid = defaultdict(lambda: float("inf"))
+    predecessors = {}
+
+    while queue:
+        item = heapq.heappop(queue)
+        time_val, state, prev_state = item.time, item.state, item.prev_state
+
+        if time_val > grid[state]:
             continue
 
         x, y, v_x, v_y, tick_x, tick_y = state
 
-        grid_time, moves_x, moves_y = grid[state]
-        if grid_time < time:
+        if asteroid_quad.within_bb(BoundingBox(x - 1, y - 1, x + 1, y + 1)):
             continue
 
-        if any((x + dxx, y + dyy) in ass for dxx in range(-2, 3) for dyy in
-               range(-2, 3) if max(abs(dxx), abs(dyy)) == 2):
+        grid[state] = time_val
+        if prev_state is not None:
+            predecessors[state] = prev_state
+
+        # Check if we reached the target
+        if x == x_target and y == y_target and v_x == 0 and v_y == 0:
+            moves_x = [0]
+            moves_y = [0]
+
+            _, _, v_x, v_y, tick_x, tick_y = current_state = state
+            while current_state in predecessors:
+                _, _, prev_v_x, prev_v_y, prev_tick_x, prev_tick_y = (
+                    prev_state
+                ) = predecessors[current_state]
+
+                if v_x != prev_v_x or tick_x >= prev_tick_x:
+                    moves_x.append(prev_v_x)
+
+                if v_y != prev_v_y or tick_y >= prev_tick_y:
+                    moves_y.append(prev_v_y)
+
+                current_state = prev_state
+
+            moves_x.reverse()
+            moves_y.reverse()
+
+            elapsed = time.time() - start_time
+            print(
+                f"Done {i} in {elapsed:.3f}s with {time_val}/{max_t} steps",
+                file=sys.stderr,
+            )
+
+            return moves_x, moves_y
+
+        # next meaningful tick
+        elapsed = min(tick_x, tick_y) + 1
+        new_time = time_val + elapsed
+
+        if new_time > max_t:
             continue
 
-        if x == X and y == Y and v_x == 0 and v_y == 0:
-            elapsed = time_lib() - start
-            print(f"Done {I} in {elapsed} in {time} steps out of {MAX_T} allowwd", file=sys.stderr)
-            return grid[state][1:]
+        # possible x changes
+        x_changes = changes(x, v_x, tick_x, elapsed)
 
-        if not (
-            bounding_box[0] <= x <= bounding_box[1]
-            and bounding_box[2] <= y <= bounding_box[3]
+        # possible y changes
+        y_changes = changes(y, v_y, tick_y, elapsed)
+
+        for (new_x, new_v_x, new_tick_x), (new_y, new_v_y, new_tick_y) in product(
+            x_changes, y_changes
         ):
-            continue
+            new_state = (new_x, new_y, new_v_x, new_v_y, new_tick_x, new_tick_y)
 
-        for dv_x in range(-1, 2):
-            new_x = x
-            new_tick_x = tick_x - 1
-            if new_tick_x >= 0:
-                dv_x = 0
+            if new_time >= grid[new_state]:
+                continue
 
+            grid[new_state] = new_time
 
-            for dv_y in range(-1, 2):
-                new_y = y
-                new_tick_y = tick_y - 1
-                if new_tick_y >= 0:
-                    dv_y = 0
+            new_heuristic = new_time + abs(new_x - x_target) + abs(new_y - y_target)
 
-                new_moves_x = moves_x.copy()
-                new_moves_y = moves_y.copy()
+            heapq.heappush(queue, QueueItem(new_heuristic, new_time, new_state, state))
 
-                new_v_x = apply_acc(v_x, dv_x)
-                new_v_y = apply_acc(v_y, dv_y)
-
-                if new_tick_x == -1:
-                    new_tick_x = max(abs(new_v_x), 1) - 1
-                    new_x = x + sign(v_x)
-                    new_moves_x.append(new_v_x)
-
-                if new_tick_y == -1:
-                    new_tick_y = max(abs(new_v_y), 1) - 1
-                    new_y = y + sign(v_y)
-                    new_moves_y.append(new_v_y)
-
-                new_state = (new_x, new_y, new_v_x, new_v_y, new_tick_x, new_tick_y)
-                new_time = time + 1
-
-                if grid[new_state][0] > new_time:
-                    new_heuristic = new_time + max(
-                        abs(new_x - X) * 3, abs(new_y - Y) * 3
-                    )
-                    queue.put((new_heuristic, new_time, new_state))
-
-                    grid[new_state] = (new_time, new_moves_x, new_moves_y)
-
-    raise Exception("No solution")
+    raise Exception(f"No solution found for task {i}")
 
 
 def main():
-    Xs = []
-    Ys = []
-    ass = []
-    Ts = []
+    n = int(input())
 
-    N = int(input())
-    for i in range(N):
-        XY, T = input().split()
-        X, Y = map(int, XY.split(","))
+    tasks = []
 
-        _ = int(input())
+    for i in range(n):
+        line = input()
+        xy, t = line.split()
 
-        As = []
+        coords = list(map(int, xy.split(",")))
+        x, y = coords[0], coords[1]
 
-        for a in input().split():
-            aX, aY = map(int, a.split(","))
-            As.append((aX, aY))
+        _num_asteroids = int(input())
 
-        Xs.append(X)
-        Ys.append(Y)
-        ass.append(As)
-        Ts.append(int(T))
+        asteroid_line = input()
 
-    with multiprocessing.Pool() as pool:
-        for moves_x, moves_y in pool.starmap(solve, zip(range(N), Xs, Ys, ass, Ts)):
-            print(*moves_x)
-            print(*moves_y)
+        asteroids: list[tuple[int, int]] = []
+        for asteroid_str in asteroid_line.strip().split():
+            asteroid_coords = list(map(int, asteroid_str.split(",")))
+            asteroids.append((asteroid_coords[0], asteroid_coords[1]))
+
+        tasks.append((i, x, y, asteroids, int(t)))
+
+    # Process in parallel
+    with Pool() as pool:
+        results = pool.starmap(solve, tasks)
+
+    # Output results in order
+    for i, result in enumerate(results):
+        if result is not None:
+            moves_x, moves_y = result
+            print(" ".join(map(str, moves_x)))
+            print(" ".join(map(str, moves_y)))
             print()
+        else:
+            print(f"Error solving case {i}: No solution", file=sys.stderr)
+            return 1
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,13 +1,15 @@
+#![warn(clippy::pedantic)]
+
 use fxhash::FxHashMap;
 use quadtree_rs::{Quadtree, area::AreaBuilder, point::Point};
 use rayon::prelude::*;
-use std::collections::BinaryHeap;
-use std::collections::hash_map::Entry;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::io::{self, BufRead};
 use std::time::Instant;
 
 #[inline]
-fn apply_acc(v: i8, dv: i8) -> i8 {
+fn apply_acc(v: Velocity, dv: Velocity) -> Velocity {
     if v == 0 {
         return dv * 5;
     }
@@ -21,41 +23,40 @@ fn apply_acc(v: i8, dv: i8) -> i8 {
     v + dv
 }
 
-fn changes(pos: i16, v: i8, tick: u8, elapsed: u8, out: &mut Vec<(i16, i8, u8)>) {
+type Position = i16;
+type Velocity = i8;
+type Tick = i8;
+type Time = i16;
+type State = (Position, Position, Velocity, Velocity, Tick, Tick);
+
+fn changes(
+    pos: Position,
+    v: Velocity,
+    tick: Tick,
+    elapsed: Tick,
+    out: &mut Vec<(Position, Velocity, Tick)>,
+) {
     if let Some(new_tick_y) = tick.checked_sub(elapsed) {
         out.push((pos, v, new_tick_y));
     } else {
-        let new_y = pos + v.signum() as i16;
-
-        // let base = if v == 1 {
-        //     0..=1
-        // } else if v == -1 {
-        //     -1..=0
-        // } else {
-        // };
+        let new_y = pos + v.signum() as Position;
 
         out.extend((-1..=1).filter_map(|dv| {
             let new_v = apply_acc(v, dv);
-            (dv == 0 || new_v != v).then_some((
-                new_y,
-                new_v,
-                new_v.unsigned_abs().saturating_sub(1),
-            ))
+            (dv == 0 || new_v != v).then_some((new_y, new_v, (new_v.abs() - 1).max(0)))
         }));
     }
 }
 
-type State = (i16, i16, i8, i8, u8, u8);
-
 struct QueueItem {
-    heuristic: u16,
-    time: u16,
+    heuristic: Time,
+    time: Time,
     state: State,
     prev_state: State,
 }
 
 impl QueueItem {
-    fn new(heuristic: u16, time: u16, state: State, prev_state: State) -> Self {
+    fn new(heuristic: Time, time: Time, state: State, prev_state: State) -> Self {
         Self {
             heuristic,
             time,
@@ -90,16 +91,16 @@ impl Ord for QueueItem {
 
 fn solve(
     i: usize,
-    x_target: i16,
-    y_target: i16,
-    asteroids: &[(i16, i16)],
-    max_t: u16,
-) -> Result<(Vec<i8>, Vec<i8>), String> {
+    x_target: Position,
+    y_target: Position,
+    asteroids: &[(Position, Position)],
+    max_t: Time,
+) -> Result<(Vec<Velocity>, Vec<Velocity>), String> {
     let start = Instant::now();
 
     let asteroid_tree = {
         // assume the grid fits within 2000x2000 centered around the origin
-        let mut qtree = Quadtree::<i16, ()>::new_with_anchor(Point { x: -1000, y: -1000 }, 11);
+        let mut qtree = Quadtree::<Position, ()>::new_with_anchor(Point { x: -1000, y: -1000 }, 12);
 
         for (x, y) in asteroids {
             qtree.insert_pt(
@@ -119,9 +120,9 @@ fn solve(
     let mut queue: BinaryHeap<QueueItem> = BinaryHeap::new();
     queue.push(QueueItem::new(0, 2, state, state));
 
-    let mut grid: FxHashMap<State, u16> = FxHashMap::default();
+    let mut grid: BTreeMap<State, Time> = BTreeMap::default();
 
-    let mut predecessors: FxHashMap<State, State> = FxHashMap::default();
+    let mut predecessors: BTreeMap<State, State> = BTreeMap::default();
 
     let mut x_changes = Vec::with_capacity(3);
     let mut y_changes = Vec::with_capacity(3);
@@ -190,7 +191,7 @@ fn solve(
 
         let elapsed = tick_x.min(tick_y) + 1;
 
-        let new_time = time + elapsed as u16;
+        let new_time = time + elapsed as Time;
         if new_time > max_t {
             continue;
         }
@@ -213,9 +214,7 @@ fn solve(
 
                 new_entry.insert_entry(new_time);
 
-                let new_heuristic = new_time
-                    + (new_x - x_target).unsigned_abs()
-                    + (new_y - y_target).unsigned_abs();
+                let new_heuristic = new_time + (new_x - x_target).abs() + (new_y - y_target).abs();
 
                 queue.push(QueueItem {
                     time: new_time,
@@ -249,7 +248,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let xy = parts[0];
         let t = parts[1];
 
-        let coords: Vec<i16> = xy.split(',').map(|s| s.parse().unwrap()).collect();
+        let coords: Vec<_> = xy.split(',').map(|s| s.parse().unwrap()).collect();
         let x = coords[0];
         let y = coords[1];
 
@@ -259,7 +258,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut asteroids = Vec::new();
 
         for asteroid_str in asteroid_line.split_whitespace() {
-            let asteroid_coords: Vec<i16> = asteroid_str
+            let asteroid_coords: Vec<_> = asteroid_str
                 .split(',')
                 .map(|s| s.parse().unwrap())
                 .collect();
@@ -290,7 +289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "{}",
                     moves_x
                         .iter()
-                        .map(|x| x.to_string())
+                        .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(" ")
                 );
@@ -298,14 +297,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "{}",
                     moves_y
                         .iter()
-                        .map(|y| y.to_string())
+                        .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(" ")
                 );
                 println!();
             }
             Err(e) => {
-                eprintln!("Error solving case {}: {}", i, e);
+                eprintln!("Error solving case {i}: {e}");
                 return Err(e.into());
             }
         }

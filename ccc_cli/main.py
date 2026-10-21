@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import difflib
 import getpass
 import io
@@ -195,10 +196,10 @@ def cmd_new(args: argparse.Namespace) -> int:
     if pdf_names:
         pdf = task.folder / pdf_names[0]
         print(f"Description: {pdf}")
-        try:
-            webbrowser.open(pdf.as_uri())
-        except webbrowser.Error:
-            pass
+        if sys.stdout.isatty():
+            with contextlib.suppress(webbrowser.Error):
+                webbrowser.open(pdf.as_uri())
+
     if visualizer is not None:
         print(f"Visualizer: {visualizer}")
 

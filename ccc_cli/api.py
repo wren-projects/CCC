@@ -223,7 +223,7 @@ class GameApi:
         info = self.contestant_info()
         try:
             return int(info["score"]["gameScore"]["level"])
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             return 1
 
     def level_files_url(self, level: int) -> str:

@@ -217,7 +217,6 @@ def _show_mismatch(expected: str, actual: str) -> None:
         fromfile="expected",
         tofile="got",
         lineterm="",
-        color=True,
     )
     print("    First differences:")
     for line in list(diff)[:60]:

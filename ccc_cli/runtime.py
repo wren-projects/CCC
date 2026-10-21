@@ -6,8 +6,7 @@ import builtins
 import os
 import sys
 from collections.abc import Callable
-from types import NoneType
-from typing import TextIO, overload
+from typing import TextIO, TypeVar, overload
 
 _output: TextIO | None = None
 _console: TextIO | None = None
@@ -89,15 +88,18 @@ def wordline() -> tuple[str, ...]:
     return tuple(input().split())
 
 
-@overload
-def grid[T](width: int, height: int, f: Callable[[int, int], T]) -> list[list[T]]: ...
-@overload
-def grid[T](width: int, height: int, value: T) -> list[list[T]]: ...
-@overload
-def grid[T](width: int, height: int) -> list[list[None]]: ...
+T = TypeVar("T")
 
 
-def grid[T = NoneType](
+@overload
+def grid(width: int, height: int, f: Callable[[int, int], T]) -> list[list[T]]: ...
+@overload
+def grid(width: int, height: int, value: T) -> list[list[T]]: ...
+@overload
+def grid(width: int, height: int) -> list[list[None]]: ...
+
+
+def grid(
     width: int, height: int, fill: Callable[[int, int], T] | T | None = None
 ) -> list[list[T | None]]:
     if isinstance(fill, Callable):
